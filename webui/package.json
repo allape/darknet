@@ -1,0 +1,17 @@
+{
+  "name": "yolor",
+  "version": "0.0.1",
+  "description": "Web UI for YOLO",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx serve --cors --single -l 3000 ."
+  },
+  "author": "allape",
+  "license": "MIT",
+  "dependencies": {
+    "konva": "^9.2.3"
+  },
+  "devDependencies": {
+    "serve": "^14.2.1"
+  }
+}

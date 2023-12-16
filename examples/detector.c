@@ -1,3 +1,4 @@
+#include "data.h"
 #include "darknet.h"
 
 static int coco_ids[] = {1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,27,28,31,32,33,34,35,36,37,38,39,40,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,67,70,72,73,74,75,76,77,78,79,80,81,82,84,85,86,87,88,89,90};
@@ -6,7 +7,7 @@ static int coco_ids[] = {1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,2
 void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, int ngpus, int clear)
 {
     list *options = read_data_cfg(datacfg);
-    char *train_images = option_find_str(options, "train", "data/train.list");
+    // char *train_images = option_find_str(options, "train", "data/train.list");
     char *backup_directory = option_find_str(options, "backup", "/backup/");
 
     srand(time(0));
@@ -29,6 +30,11 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     srand(time(0));
     network *net = nets[0];
 
+    if (net->batch > 1) {
+        printf("Only one-batch network can be used in this thing");
+        exit(1);
+    }
+
     int imgs = net->batch * net->subdivisions * ngpus;
     printf("Learning Rate: %g, Momentum: %g, Decay: %g\n", net->learning_rate, net->momentum, net->decay);
     data train, buffer;
@@ -38,8 +44,11 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     int classes = l.classes;
     float jitter = l.jitter;
 
-    list *plist = get_paths(train_images);
+    // list *plist = get_paths(train_images);
     //int N = plist->size;
+    // char **paths = (char **)list_to_array(plist);
+    list *plist = make_list();
+    list_insert(plist, "");
     char **paths = (char **)list_to_array(plist);
 
     load_args args = get_base_args(net);
@@ -55,11 +64,25 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     //args.type = INSTANCE_DATA;
     args.threads = 64;
 
-    pthread_t load_thread = load_data(args);
     double time;
     int count = 0;
+    char input_buff[256];
+    char *input = input_buff;
     //while(i*imgs < N*120){
-    while(get_current_batch(net) < net->max_batches){
+    // while(get_current_batch(net) < net->max_batches){
+    while (1) {
+        // wget https://pjreddie.com/media/files/darknet53.conv.74
+        // ./darknet detector train cfg/voc.data cfg/yolov3-voc.cfg weights/darknet53.conv.74
+        // /Users/xigua/Documents/Playground/darknet/VOCdevkit/VOC2012/JPEGImages/2007_000027.jpg
+        printf("yolor: ready for incoming file from stdin:");
+        fflush(stdout);
+        input = fgets(input, 256, stdin);
+        if(!input) continue;
+        strtok(input, "\n");
+        paths[0] = input;
+
+        pthread_t load_thread = load_data(args);
+
         if(l.random && count++%10 == 0){
             printf("Resizing\n");
             int dim = (rand() % 10 + 10) * 32;
@@ -127,22 +150,22 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
 
         i = get_current_batch(net);
         printf("%ld: %f, %f avg, %f rate, %lf seconds, %d images\n", get_current_batch(net), loss, avg_loss, get_current_rate(net), what_time_is_it_now()-time, i*imgs);
-        if(i%100==0){
+//         if(i%100==0){
+// #ifdef GPU
+//             if(ngpus != 1) sync_nets(nets, ngpus, 0);
+// #endif
+//             char buff[256];
+//             sprintf(buff, "%s/%s.backup", backup_directory, base);
+//             save_weights(net, buff);
+//         }
+        // if(i%10000==0 || (i < 1000 && i%100 == 0)){
 #ifdef GPU
-            if(ngpus != 1) sync_nets(nets, ngpus, 0);
+        if(ngpus != 1) sync_nets(nets, ngpus, 0);
 #endif
-            char buff[256];
-            sprintf(buff, "%s/%s.backup", backup_directory, base);
-            save_weights(net, buff);
-        }
-        if(i%10000==0 || (i < 1000 && i%100 == 0)){
-#ifdef GPU
-            if(ngpus != 1) sync_nets(nets, ngpus, 0);
-#endif
-            char buff[256];
-            sprintf(buff, "%s/%s_%d.weights", backup_directory, base, i);
-            save_weights(net, buff);
-        }
+        char buff[256];
+        sprintf(buff, "%s/%s_%d.weights", backup_directory, base, i%10);
+        save_weights(net, buff);
+        // }
         free_data(train);
     }
 #ifdef GPU
@@ -561,11 +584,11 @@ void validate_detector_recall(char *cfgfile, char *weightfile)
 
 void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh, float hier_thresh, char *outfile, int fullscreen)
 {
-    list *options = read_data_cfg(datacfg);
-    char *name_list = option_find_str(options, "names", "data/names.list");
-    char **names = get_labels(name_list);
+    // list *options = read_data_cfg(datacfg);
+    // char *name_list = option_find_str(options, "names", "data/names.list");
+    // char **names = get_labels(name_list);
 
-    image **alphabet = load_alphabet();
+    // image **alphabet = load_alphabet();
     network *net = load_network(cfgfile, weightfile, 0);
     set_batch_network(net, 1);
     srand(2222222);
@@ -577,10 +600,10 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         if(filename){
             strncpy(input, filename, 256);
         } else {
-            printf("Enter Image Path: ");
+            printf("yolor: Enter Image Path: ");
             fflush(stdout);
             input = fgets(input, 256, stdin);
-            if(!input) return;
+            if(!input) continue;
             strtok(input, "\n");
         }
         image im = load_image_color(input,0,0);
@@ -591,32 +614,67 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         //resize_network(net, sized.w, sized.h);
         layer l = net->layers[net->n-1];
 
-
         float *X = sized.data;
         time=what_time_is_it_now();
         network_predict(net, X);
-        printf("%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
+        printf("\n%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
         int nboxes = 0;
         detection *dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes);
         //printf("%d\n", nboxes);
         //if (nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
         if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
-        draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
+
+        printf("yolor:boxes:");
+        for (int i = 0; i < nboxes; i++)
+        {
+            detection det = dets[i];
+            for (int j = 0; j < l.classes; j++)
+            {
+                if (det.prob[j] >= thresh) {
+                    box b = det.bbox;
+
+                    int left  = (b.x-b.w/2.)*im.w;
+                    int right = (b.x+b.w/2.)*im.w;
+                    int top   = (b.y-b.h/2.)*im.h;
+                    int bot   = (b.y+b.h/2.)*im.h;
+
+                    if(left < 0) left = 0;
+                    if(right > im.w-1) right = im.w-1;
+                    if(top < 0) top = 0;
+                    if(bot > im.h-1) bot = im.h-1;
+
+                    printf(
+                        "%d,%.2f,%d,%d,%d,%d%s", 
+                        // names[j], 
+                        j, 
+                        det.prob[j] * 100,
+                        left,
+                        top,
+                        right,
+                        bot,
+                        ","
+                    );
+                }
+            }
+        }
+        printf("\nyolor: Done predicating\n");
+        
+        // draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
         free_detections(dets, nboxes);
-        if(outfile){
-            save_image(im, outfile);
-        }
-        else{
-            save_image(im, "predictions");
-#ifdef OPENCV
-            make_window("predictions", 512, 512, 0);
-            show_image(im, "predictions", 0);
-#endif
-        }
+        // if(outfile){
+        //     save_image(im, outfile);
+        // }
+        // else{
+        //     save_image(im, "predictions");
+// #ifdef OPENCV
+//             make_window("predictions", 512, 512, 0);
+//             show_image(im, "predictions", 0);
+// #endif
+        // }
 
         free_image(im);
         free_image(sized);
-        if (filename) break;
+        // if (filename) break;
     }
 }
 

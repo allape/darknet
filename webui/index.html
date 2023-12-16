@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yolor</title>
+    <style>
+        body {
+            transition: 0.3s;
+        }
+
+        .resizable-image-container {
+            position: relative;
+        }
+
+        .box {
+            border: 1px solid;
+            position: absolute;
+            white-space: nowrap;
+            overflow: visible;
+            line-height: normal;
+        }
+
+        #BoxContainer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+        }
+    </style>
+    <script src="node_modules/konva/konva.min.js"></script>
+</head>
+
+<body style="opacity: 0;">
+    <div class="source">
+        <label for="Image">Image:</label>
+        <input id="Image" type="file" accept=".jpg,.jpeg,.png" onchange="preview(this)" />
+        <button type="button" id="PredicateButton" onclick="predicate()">Predicate</button>
+    </div>
+    <div class="preview">
+        <div class="resizable-image-container">
+            <img id="ImagePreviewer" src="" alt="Image previewer" onload="resizeImageNaturally(this)" />
+            <div id="BoxContainer"></div>
+        </div>
+    </div>
+    <div id="Container" style="border: 4px solid red;"></div>
+    <script>
+        window.addEventListener('DOMContentLoaded', main);
+
+        let names = [];
+
+        function randomColor() {
+            return `rgb(${255 * Math.random()},${255 * Math.random()},${255 * Math.random()})`;
+        }
+
+        async function main() {
+            names = await (await fetch('/names')).json();
+            document.body.style.opacity = 1;
+        }
+
+        function resizeImageNaturally(ImagePreviewer) {
+            ImagePreviewer.style.width = `${ImagePreviewer.naturalWidth}px`;
+            ImagePreviewer.style.height = `${ImagePreviewer.naturalHeight}px`;
+        }
+
+        function preview(imageEle) {
+            /** @type {HTMLImageElement} */
+            const ImagePreviewer = document.getElementById('ImagePreviewer');
+            if (ImagePreviewer.src) {
+                URL.revokeObjectURL(ImagePreviewer.src);
+            }
+            ImagePreviewer.src = URL.createObjectURL(imageEle.files?.[0]);
+            const BoxContainer = document.getElementById('BoxContainer');
+            BoxContainer.innerHTML = '';
+        }
+
+        async function predicate() {
+            /** @type {HTMLInputElement} */
+            const Image = document.getElementById('Image');
+
+            const imageFile = Image?.files?.[0];
+            if (!imageFile) {
+                alert('Please select a image');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.set('image', imageFile);
+
+            const req = await fetch('/predicate', {
+                method: 'POST',
+                body: formData,
+            });
+            const content = await req.json();
+
+            if (req.status !== 200) {
+                alert(content);
+                return;
+            }
+
+            if (content.length === 0) {
+                alert('No any known object found');
+                return;
+            }
+
+            const BoxContainer = document.getElementById('BoxContainer');
+            BoxContainer.innerHTML = '';
+
+            for (let i = 0; i < content.length; i++) {
+                const box = content[i];
+                const ele = document.createElement('div');
+                ele.classList.add('box');
+                const boxWidth = box.right - box.left;
+                ele.style.top = `${box.top}px`;
+                ele.style.left = `${box.left}px`;
+                ele.style.width = `${boxWidth}px`;
+                ele.style.height = `${box.bottom - box.top}px`;
+                ele.innerText = `${names[parseInt(box.label)]} - ${box.probability}%`;
+                const color = randomColor();
+                ele.style.color = color;
+                ele.style.borderColor = color;
+                const borderWidth = boxWidth * 0.1;
+                ele.style.borderWidth = `${borderWidth < 1 ? 1 : (borderWidth > 4 ? 4 : borderWidth)}px`;
+                BoxContainer.append(ele);
+            }
+        }
+    </script>
+    <script>
+        // define several math function
+        function getCorner(pivotX, pivotY, diffX, diffY, angle) {
+            const distance = Math.sqrt(diffX * diffX + diffY * diffY);
+
+            /// find angle from pivot to corner
+            angle += Math.atan2(diffY, diffX);
+
+            /// get new x and y and round it off to integer
+            const x = pivotX + distance * Math.cos(angle);
+            const y = pivotY + distance * Math.sin(angle);
+
+            return { x: x, y: y };
+        }
+        function getClientRect(rotatedBox) {
+            const { x, y, width, height } = rotatedBox;
+            const rad = rotatedBox.rotation;
+
+            const p1 = getCorner(x, y, 0, 0, rad);
+            const p2 = getCorner(x, y, width, 0, rad);
+            const p3 = getCorner(x, y, width, height, rad);
+            const p4 = getCorner(x, y, 0, height, rad);
+
+            const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+            const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+            const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+            const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+
+            return {
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY,
+            };
+        }
+        function getTotalBox(boxes) {
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+
+            boxes.forEach((box) => {
+                minX = Math.min(minX, box.x);
+                minY = Math.min(minY, box.y);
+                maxX = Math.max(maxX, box.x + box.width);
+                maxY = Math.max(maxY, box.y + box.height);
+            });
+            return {
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY,
+            };
+        }
+    </script>
+    <script>
+        let mouseDownInShape = false;
+        let currentDrawingRect = null;
+        const stage = new Konva.Stage({
+            container: 'Container',
+            width: 500,
+            height: 500,
+        });
+        console.log('stage', window.konvaStage=stage);
+        stage.on('mousedown', (e) => {
+            if (mouseDownInShape) {
+                return;
+            }
+            currentDrawingRect = newLayer(e.evt.layerX, e.evt.layerY);
+        });
+        stage.on('mousemove', (e) => {
+            if (!currentDrawingRect) {
+                return;
+            }
+            const x = e.evt.layerX;
+            const y = e.evt.layerY;
+            currentDrawingRect.setAttrs({
+                width: x - currentDrawingRect.x(),
+                height: y - currentDrawingRect.y(),
+            });
+        });
+        stage.on('mouseup', (e) => {
+            if (!currentDrawingRect) {
+                return;
+            }
+            const x = e.evt.layerX;
+            const y = e.evt.layerY;
+            currentDrawingRect.setAttrs({
+                width: x - currentDrawingRect.x(),
+                height: y - currentDrawingRect.y(),
+            });
+            currentDrawingRect = null;
+        });
+    </script>
+    <script>
+        function newLayer(x, y) {
+            const layer = new Konva.Layer();
+            stage.add(layer);
+
+            // layer.clone(); // to backup
+            // layer.destroy(); // to remove
+
+            layer.on('click', () => {
+                layer.moveToTop();
+            });
+
+            const shape1 = new Konva.Rect({
+                x: x,
+                y: y,
+                width: 0,
+                height: 0,
+                draggable: true,
+            });
+            shape1.on('mousedown', () => {
+                mouseDownInShape = true;
+            });
+            shape1.on('mouseup', () => {
+                mouseDownInShape = false;
+            });
+            layer.add(shape1);
+            const tr = new Konva.Transformer({
+                nodes: [shape1],
+                keepRatio: false,
+                rotateEnabled: false,
+                borderStroke: 'red',
+                borderStrokeWidth: 4,
+                enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+            });
+            tr.on('mousedown', () => {
+                mouseDownInShape = true;
+            });
+            tr.on('mouseup', () => {
+                mouseDownInShape = false;
+            });
+            layer.add(tr);
+
+            tr.on('dragmove', () => {
+                const boxes = tr.nodes().map((node) => node.getClientRect());
+                const box = getTotalBox(boxes);
+                tr.nodes().forEach((shape) => {
+                    const absPos = shape.getAbsolutePosition();
+                    // where are shapes inside bounding box of all shapes?
+                    const offsetX = box.x - absPos.x;
+                    const offsetY = box.y - absPos.y;
+
+                    // we total box goes outside of viewport, we need to move absolute position of shape
+                    const newAbsPos = { ...absPos };
+                    if (box.x < 0) {
+                        newAbsPos.x = -offsetX;
+                    }
+                    if (box.y < 0) {
+                        newAbsPos.y = -offsetY;
+                    }
+                    if (box.x + box.width > stage.width()) {
+                        newAbsPos.x = stage.width() - box.width - offsetX;
+                    }
+                    if (box.y + box.height > stage.height()) {
+                        newAbsPos.y = stage.height() - box.height - offsetY;
+                    }
+                    shape.setAbsolutePosition(newAbsPos);
+                });
+            });
+            return shape1;
+        }
+    </script>
+</body>
+
+</html>

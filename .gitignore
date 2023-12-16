@@ -25,3 +25,16 @@ ehthumbs.db
 Icon?
 Thumbs.db
 *.swp
+
+.vscode
+libdarknet.a
+libdarknet.so
+
+VOCdevkit
+backup
+weights
+
+2007_*.txt
+2012_*.txt
+train.all.txt
+train.txt
